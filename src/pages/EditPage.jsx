@@ -1,17 +1,27 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, Navigate, useParams } from 'react-router-dom'
+import {
+  ConfirmModal,
+  IconEdit,
+  IconNested,
+  IconTrash,
+  IconView,
+  TipButton,
+  TipLink,
+} from '../components/actionUi'
 import { DEFAULT_GROUP_NAME, DEFAULT_NODE_TYPE, DEFAULT_TRIP_DESC, GROUP_TYPE_LABEL, ITINERARY_TYPE, NODE_TYPES, ROOT_ID } from '../lib/constants'
 import { captureFlipRects, playFlip } from '../lib/flip'
 import {
+  editBreadcrumbTrail,
   editPathFor,
   fromDatetimeLocalValue,
   getNode,
   isGroup,
   isItineraryTrip,
   isTrip,
-  parentEditPath,
   toDatetimeLocalValue,
+  viewPathFor,
 } from '../lib/model'
 import { useStore } from '../lib/store'
 import { TypeIcon, typeToneClass } from '../lib/typeIcons'
@@ -22,142 +32,6 @@ function useEditUi() {
   const ctx = useContext(EditUiContext)
   if (!ctx) throw new Error('useEditUi requires EditUiContext')
   return ctx
-}
-
-function IconTrash({ className = 'trip-icon' }) {
-  return (
-    <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <path
-        d="M360.533333 170.666667a42.666667 42.666667 0 0 1 42.666667-42.666667h217.6a42.666667 42.666667 0 0 1 42.666667 42.666667V213.333333h170.666666a42.666667 42.666667 0 1 1 0 85.333334H192a42.666667 42.666667 0 1 1 0-85.333334h168.533333V170.666667zM256 341.333333h512l-36.266667 490.666667a85.333333 85.333333 0 0 1-85.333333 78.933333H377.6a85.333333 85.333333 0 0 1-85.333333-78.933333L256 341.333333z m128 128a42.666667 42.666667 0 0 1 85.333333 0v298.666667a42.666667 42.666667 0 0 1-85.333333 0V469.333333z m170.666667 0a42.666667 42.666667 0 0 1 85.333333 0v298.666667a42.666667 42.666667 0 0 1-85.333333 0V469.333333z"
-        fill="currentColor"
-      />
-    </svg>
-  )
-}
-
-function IconEdit({ className = 'trip-icon' }) {
-  return (
-    <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <path
-        d="M832.853333 342.186667l-151.04-151.04a42.666667 42.666667 0 0 0-60.33 0L189.866667 622.762667a42.666667 42.666667 0 0 0-11.178667 19.754666l-42.666667 170.666667a42.666667 42.666667 0 0 0 51.882667 51.882667l170.666667-42.666667a42.666667 42.666667 0 0 0 19.754666-11.178667l431.616-431.616a42.666667 42.666667 0 0 0 0-60.330666zM398.506667 746.666667l-96.853334 24.213333 24.213334-96.853333 360.106666-360.106667 72.64 72.64-360.106666 360.106667z"
-        fill="currentColor"
-      />
-    </svg>
-  )
-}
-
-function IconNested({ className = 'trip-icon' }) {
-  return (
-    <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <path
-        d="M213.333333 170.666667h426.666667a85.333333 85.333333 0 0 1 85.333333 85.333333v85.333333h42.666667a85.333333 85.333333 0 0 1 85.333333 85.333334v341.333333a85.333333 85.333333 0 0 1-85.333333 85.333333H384a85.333333 85.333333 0 0 1-85.333333-85.333333v-85.333333H213.333333a85.333333 85.333333 0 0 1-85.333333-85.333334V256a85.333333 85.333333 0 0 1 85.333333-85.333333z m0 85.333333v426.666667h85.333334V341.333333a85.333333 85.333333 0 0 1 85.333333-85.333333h341.333333V256H213.333333z m170.666667 170.666667v341.333333h426.666667V426.666667H384z"
-        fill="currentColor"
-      />
-    </svg>
-  )
-}
-
-/** Portal tooltip — avoids overflow clipping without revealing hidden card content. */
-function FloatingTip({ anchorRef, label, open }) {
-  const [pos, setPos] = useState(null)
-
-  useEffect(() => {
-    if (!open || !label || !anchorRef.current) {
-      setPos(null)
-      return undefined
-    }
-    const update = () => {
-      const el = anchorRef.current
-      if (!el) return
-      const rect = el.getBoundingClientRect()
-      setPos({
-        top: rect.top,
-        left: rect.left + rect.width / 2,
-      })
-    }
-    update()
-    window.addEventListener('scroll', update, true)
-    window.addEventListener('resize', update)
-    return () => {
-      window.removeEventListener('scroll', update, true)
-      window.removeEventListener('resize', update)
-    }
-  }, [open, label, anchorRef])
-
-  if (!open || !label || !pos) return null
-  return createPortal(
-    <div className="floating-tip" style={{ top: pos.top, left: pos.left }} role="tooltip">
-      {label}
-    </div>,
-    document.body,
-  )
-}
-
-function TipButton({ tip, className = '', children, ...props }) {
-  const ref = useRef(null)
-  const [open, setOpen] = useState(false)
-  return (
-    <>
-      <button
-        type="button"
-        {...props}
-        ref={ref}
-        className={className}
-        onMouseEnter={(e) => {
-          setOpen(true)
-          props.onMouseEnter?.(e)
-        }}
-        onMouseLeave={(e) => {
-          setOpen(false)
-          props.onMouseLeave?.(e)
-        }}
-        onFocus={(e) => {
-          setOpen(true)
-          props.onFocus?.(e)
-        }}
-        onBlur={(e) => {
-          setOpen(false)
-          props.onBlur?.(e)
-        }}
-      >
-        {children}
-      </button>
-      <FloatingTip anchorRef={ref} label={tip} open={open} />
-    </>
-  )
-}
-
-function TipLink({ tip, className = '', children, ...props }) {
-  const ref = useRef(null)
-  const [open, setOpen] = useState(false)
-  return (
-    <>
-      <Link
-        {...props}
-        ref={ref}
-        className={className}
-        onMouseEnter={(e) => {
-          setOpen(true)
-          props.onMouseEnter?.(e)
-        }}
-        onMouseLeave={(e) => {
-          setOpen(false)
-          props.onMouseLeave?.(e)
-        }}
-        onFocus={(e) => {
-          setOpen(true)
-          props.onFocus?.(e)
-        }}
-        onBlur={(e) => {
-          setOpen(false)
-          props.onBlur?.(e)
-        }}
-      >
-        {children}
-      </Link>
-      <FloatingTip anchorRef={ref} label={tip} open={open} />
-    </>
-  )
 }
 
 const NARROW_CARD_MAX = 136 // px — too narrow for 3 action icons
@@ -639,6 +513,7 @@ function TripCard({
 function StretchUnit({
   nodeId,
   showRight,
+  isLast = false,
   expanded,
   collapsed,
   focusId,
@@ -652,12 +527,14 @@ function StretchUnit({
   const node = getNode(store, nodeId)
   if (!node) return null
 
-  const showAdd = activeId === nodeId
-  const showRightAdd = showAdd && showRight
+  const isActive = activeId === nodeId
+  // Always expose below-add on the outermost column's last card.
+  const showBelowAdd = isActive || isLast
+  const showRightAdd = isActive && showRight
   const stateClass = expanded ? ' is-expanded' : (collapsed ? ' is-collapsed' : '')
 
   return (
-    <div className={`stretch-unit${showRightAdd ? ' has-right' : ''}${showAdd ? ' has-add' : ''}${stateClass}`}>
+    <div className={`stretch-unit${showRightAdd ? ' has-right' : ''}${showBelowAdd ? ' has-add' : ''}${stateClass}`}>
       {isTrip(node) ? (
         <TripCard
           nodeId={nodeId}
@@ -684,7 +561,7 @@ function StretchUnit({
           onClick={() => openCreateTrip(() => addBeside(nodeId))}
         />
       )}
-      {showAdd && (
+      {showBelowAdd && (
         <AddTripSlot
           variant="below"
           className="stretch-unit-below"
@@ -707,6 +584,7 @@ function StretchColumn({
   onFocus,
   depth = 0,
   showRightFor,
+  persistLastBelowAdd = false,
   className = '',
 }) {
   const { store } = useStore()
@@ -721,17 +599,19 @@ function StretchColumn({
       className={`stretch-column${hasActive ? ' has-active' : ''}${className ? ` ${className}` : ''}`}
       style={{ '--col-units': entries.length }}
     >
-      {entries.map((entry) => {
+      {entries.map((entry, index) => {
         const expanded = hasActive && entry.id === expandedId
         const collapsed = hasActive && !expanded
         const showRight = showRightFor
           ? showRightFor(entry, entries)
           : true
+        const isLast = persistLastBelowAdd && index === entries.length - 1
         return (
           <StretchUnit
             key={entry.id}
             nodeId={entry.id}
             showRight={showRight}
+            isLast={isLast}
             expanded={expanded}
             collapsed={collapsed}
             focusId={focusId}
@@ -879,6 +759,7 @@ export default function EditPage() {
   const [focusId, setFocusId] = useState(null)
   const [activeId, setActiveId] = useState(null)
   const [tripForm, setTripForm] = useState(null)
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false)
   const pendingFlipRef = useRef(null)
 
   const scopeId = scopeParam || ROOT_ID
@@ -1011,7 +892,7 @@ export default function EditPage() {
     ? (scope.name || '我的旅程')
     : (scope.name?.trim() || '未命名行程')
   const forestIds = isRootScope ? (scope.children || []) : (scope.internals || [])
-  const backPath = isRootScope ? null : parentEditPath(store, scopeId)
+  const breadcrumbs = isRootScope ? null : editBreadcrumbTrail(store, scopeId)
 
   const editUi = { openCreateTrip, openEditTrip, openEditGroup }
 
@@ -1020,32 +901,60 @@ export default function EditPage() {
       <div className="page" onClick={clearActiveOnBlank}>
         <header className="page-header">
           <div className="page-brand">
-            <p className="eyebrow">{isRootScope ? '日程录入' : '内部行程'}</p>
+            {breadcrumbs?.length ? (
+              <nav className="edit-breadcrumb" aria-label="内部行程路径">
+                <ol className="edit-breadcrumb-list">
+                  {breadcrumbs.map((crumb, index) => {
+                    const isLast = index === breadcrumbs.length - 1
+                    return (
+                      <li key={crumb.id} className="edit-breadcrumb-item">
+                        {isLast ? (
+                          <span className="edit-breadcrumb-current" aria-current="page">
+                            {crumb.label}
+                          </span>
+                        ) : (
+                          <Link className="edit-breadcrumb-link" to={crumb.path}>
+                            {crumb.label}
+                          </Link>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ol>
+              </nav>
+            ) : (
+              <p className="eyebrow">我的旅程</p>
+            )}
             <h1 className="page-title">{title}</h1>
           </div>
           <div className="header-actions">
-            {backPath ? (
-              <Link className="btn btn-ghost" to={backPath}>
-                返回上级
-              </Link>
-            ) : null}
-            <Link className="btn" to="/view">
-              查看行程
-            </Link>
-            {isRootScope ? (
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => {
-                  if (window.confirm('重置数据？当前内容将清空。')) {
-                    reset()
-                    setFocusId(null)
-                    setActiveId(null)
-                  }
-                }}
+            {!isRootScope ? (
+              <TipButton
+                tip="编辑行程信息"
+                className="header-icon-btn"
+                aria-label="编辑行程信息"
+                onClick={() => openEditTrip(scope.id)}
               >
-                清空重置
-              </button>
+                <IconEdit />
+              </TipButton>
+            ) : null}
+            <TipLink
+              tip="查看行程"
+              className="header-icon-btn"
+              to={viewPathFor(scopeId)}
+              aria-label="查看行程"
+            >
+              <IconView />
+            </TipLink>
+            {isRootScope ? (
+              <TipButton
+                tip="清空重置"
+                className="header-icon-btn is-danger"
+                aria-label="清空重置"
+                onClick={() => setResetConfirmOpen(true)}
+              >
+                <IconTrash />
+              </TipButton>
             ) : null}
           </div>
         </header>
@@ -1053,39 +962,10 @@ export default function EditPage() {
         <section className="hero-block">
           <p className="lede">
             {isRootScope
-              ? '点「添加行程」填写信息后加入；下方为后续子行程，编辑图标改信息，嵌套图标进内部行程。'
-              : '此处管理该卡片的内部行程；添加时同样先填写信息。'}
+              ? '点击「添加行程」，开启一段惊心动魄的旅程吧！'
+              : '点击「添加行程」，开启又一段惊心动魄的旅程吧！'}
           </p>
         </section>
-
-        {!isRootScope ? (
-          <div className="edit-scope-meta">
-            <button
-              type="button"
-              className="trip-name is-display edit-scope-name"
-              onClick={() => openEditTrip(scope.id)}
-            >
-              {scope.name?.trim() || '未命名行程'}
-            </button>
-            {scope.description?.trim() ? (
-              <button
-                type="button"
-                className="trip-desc is-display edit-scope-desc"
-                onClick={() => openEditTrip(scope.id)}
-              >
-                {scope.description.trim()}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => openEditTrip(scope.id)}
-              >
-                编辑行程信息
-              </button>
-            )}
-          </div>
-        ) : null}
 
         <div className="trip-stack">
           {forestIds.length === 0 ? (
@@ -1107,6 +987,7 @@ export default function EditPage() {
               }}
               depth={0}
               className="trip-stack-column"
+              persistLastBelowAdd
               showRightFor={() => true}
             />
           )}
@@ -1124,6 +1005,21 @@ export default function EditPage() {
           confirmLabel={tripForm?.confirmLabel || '确定'}
           onCancel={closeTripForm}
           onConfirm={(values) => tripForm?.onConfirm?.(values)}
+        />
+
+        <ConfirmModal
+          open={resetConfirmOpen}
+          title="清空重置"
+          message="确定清空当前全部行程数据？此操作不可撤销。"
+          confirmLabel="清空"
+          danger
+          onCancel={() => setResetConfirmOpen(false)}
+          onConfirm={() => {
+            reset()
+            setFocusId(null)
+            setActiveId(null)
+            setResetConfirmOpen(false)
+          }}
         />
       </div>
     </EditUiContext.Provider>

@@ -1,9 +1,10 @@
-import { Link } from 'react-router-dom'
+import { Link, Navigate, useParams } from 'react-router-dom'
 import {
   VerticalTimeline,
   VerticalTimelineElement,
 } from 'react-vertical-timeline-component'
 import 'react-vertical-timeline-component/style.min.css'
+import { IconEdit, TipLink } from '../components/actionUi'
 import {
   DEFAULT_GROUP_NAME,
   DEFAULT_NODE_TYPE,
@@ -12,12 +13,15 @@ import {
   ROOT_ID,
 } from '../lib/constants'
 import {
+  editBreadcrumbTrail,
+  editPathFor,
   getInternals,
   getNode,
   isGroup,
   isItineraryTrip,
   isTrip,
   toDateTimeInputValue,
+  viewPathFor,
 } from '../lib/model'
 import { useStore } from '../lib/store'
 import { TypeIcon, typeToneColor } from '../lib/typeIcons'
@@ -174,48 +178,93 @@ function ViewTimeline({ ids }) {
 }
 
 export default function ViewPage() {
+  const { nodeId: scopeParam } = useParams()
   const { store } = useStore()
-  const root = getNode(store, ROOT_ID)
-  const children = root?.children || []
+  const scopeId = scopeParam || ROOT_ID
+  const scope = getNode(store, scopeId)
+  const isRootScope = !scopeParam || scopeId === ROOT_ID
 
-  if (!root) {
-    return (
-      <div className="page">
-        <p>根节点不存在</p>
-      </div>
-    )
+  if (!scope || (!isRootScope && !isTrip(scope))) {
+    return <Navigate to="/view" replace />
   }
+
+  const title = isRootScope
+    ? (scope.name || '我的旅程')
+    : (scope.name?.trim() || '未命名行程')
+  const forestIds = isRootScope ? (scope.children || []) : getInternals(scope)
+  const editPath = editPathFor(scopeId)
+  const breadcrumbs = isRootScope ? null : editBreadcrumbTrail(store, scopeId)
 
   return (
     <div className="page page-view">
       <header className="page-header">
         <div className="page-brand">
-          <p className="eyebrow">行程查看</p>
-          <h1 className="page-title">{root.name}</h1>
+          {breadcrumbs?.length ? (
+            <nav className="edit-breadcrumb" aria-label="行程路径">
+              <ol className="edit-breadcrumb-list">
+                {breadcrumbs.map((crumb, index) => {
+                  const isLast = index === breadcrumbs.length - 1
+                  const viewTo = viewPathFor(crumb.id)
+                  return (
+                    <li key={crumb.id} className="edit-breadcrumb-item">
+                      {isLast ? (
+                        <span className="edit-breadcrumb-current" aria-current="page">
+                          {crumb.label}
+                        </span>
+                      ) : (
+                        <Link className="edit-breadcrumb-link" to={viewTo}>
+                          {crumb.label}
+                        </Link>
+                      )}
+                    </li>
+                  )
+                })}
+              </ol>
+            </nav>
+          ) : (
+            <p className="eyebrow">行程查看</p>
+          )}
+          <h1 className="page-title">{isRootScope ? title : '内部行程'}</h1>
         </div>
         <div className="header-actions">
-          <Link className="btn" to="/edit">
-            去编辑
-          </Link>
+          <TipLink
+            tip="去编辑"
+            className="header-icon-btn"
+            to={editPath}
+            aria-label="去编辑"
+          >
+            <IconEdit />
+          </TipLink>
         </div>
       </header>
 
       <section className="hero-block">
         <p className="lede">
-          按时间轴阅读旅程：节点旁为标题，其下为时间，再下为描述。
+          {isRootScope
+            ? '按时间轴阅读旅程：节点旁为标题，其下为时间，再下为描述。'
+            : '正在查看该行程的内部安排。'}
         </p>
       </section>
 
-      {children.length === 0 ? (
+      {!isRootScope ? (
+        <div className="edit-scope-meta">
+          <p className="trip-name is-display edit-scope-name">{title}</p>
+          {scope.description?.trim() ? (
+            <p className="trip-desc is-display edit-scope-desc">{scope.description.trim()}</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {forestIds.length === 0 ? (
         <div className="view-empty">
-          <p>还没有行程。</p>
-          <Link className="btn" to="/edit">
-            去录入
+          <p>{isRootScope ? '还没有行程。' : '还没有内部行程。'}</p>
+          <Link className="btn" to={editPath}>
+            {isRootScope ? '去录入' : '去编辑'}
           </Link>
         </div>
       ) : (
         <div className="tl-board">
-          <ViewTimeline ids={children} />
+          <ViewTimeline ids={forestIds} />
         </div>
       )}
     </div>

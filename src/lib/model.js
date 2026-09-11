@@ -112,16 +112,122 @@ export function editPathFor(nodeId) {
   return `/edit/${nodeId}`
 }
 
-/** Parent edit scope: nearest trip ancestor, else root `/edit`. */
+export function viewPathFor(nodeId) {
+  if (!nodeId || nodeId === ROOT_ID) return '/view'
+  return `/view/${nodeId}`
+}
+
+/** Parent edit scope: via `internals`, or a trip whose internals tree contains the parent group. */
 export function parentEditPath(store, nodeId) {
-  let current = findParentId(store, nodeId)
+  const ref = findParentRef(store, nodeId)
+  if (!ref) return '/edit'
+
+  if (ref.slot === 'internals') {
+    const parent = getNode(store, ref.parentId)
+    if (parent && isTrip(parent)) return editPathFor(ref.parentId)
+    return '/edit'
+  }
+
+  let groupId = null
+  if (ref.slot === 'members') {
+    groupId = ref.parentId
+  } else if (ref.slot === 'children') {
+    const parent = getNode(store, ref.parentId)
+    if (parent && isGroup(parent)) groupId = ref.parentId
+  }
+
+  if (groupId) {
+    const hostId = findInternalsContainingTrip(store, groupId)
+    if (hostId) return editPathFor(hostId)
+  }
+
+  return '/edit'
+}
+
+function pushRootCrumb(store, trail) {
+  const root = getNode(store, ROOT_ID)
+  trail.unshift({
+    id: ROOT_ID,
+    label: root?.name?.trim() || '我的旅程',
+    path: '/edit',
+  })
+}
+
+/**
+ * Nearest trip that contains `nodeId` somewhere under its `internals` tree
+ * (direct or nested via children / members / further internals).
+ */
+export function findInternalsContainingTrip(store, nodeId) {
+  let cursor = nodeId
+  while (cursor) {
+    const ref = findParentRef(store, cursor)
+    if (!ref) return null
+    const parent = getNode(store, ref.parentId)
+    if (!parent || isRoot(parent)) return null
+    if (ref.slot === 'internals' && isTrip(parent)) return parent.id
+    cursor = ref.parentId
+  }
+  return null
+}
+
+/**
+ * Breadcrumb for internal-edit scopes.
+ * - Follow `internals` nesting.
+ * - For groups: climb to the trip whose `internals` tree contains the group; else root.
+ * - Do not follow plain `children` between trips.
+ */
+export function editBreadcrumbTrail(store, nodeId) {
+  const trail = []
+  let current = nodeId
+
   while (current) {
     const node = getNode(store, current)
-    if (!node || isRoot(node)) return '/edit'
-    if (isTrip(node)) return editPathFor(current)
+    if (!node) break
+
+    if (isRoot(node)) {
+      pushRootCrumb(store, trail)
+      break
+    }
+
+    if (isGroup(node)) {
+      const hostId = findInternalsContainingTrip(store, node.id)
+      if (hostId) {
+        current = hostId
+        continue
+      }
+      pushRootCrumb(store, trail)
+      break
+    }
+
+    if (isTrip(node)) {
+      trail.unshift({
+        id: node.id,
+        label: node.name?.trim() || '未命名行程',
+        path: editPathFor(node.id),
+      })
+
+      const ref = findParentRef(store, current)
+      if (ref?.slot === 'internals' || ref?.slot === 'members') {
+        current = ref.parentId
+        continue
+      }
+
+      if (ref?.slot === 'children') {
+        const parent = getNode(store, ref.parentId)
+        if (parent && isGroup(parent)) {
+          current = ref.parentId
+          continue
+        }
+      }
+
+      pushRootCrumb(store, trail)
+      break
+    }
+
     current = findParentId(store, current)
   }
-  return '/edit'
+
+  return trail
 }
 
 export function getNode(store, id) {

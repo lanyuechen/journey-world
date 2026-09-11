@@ -115,7 +115,69 @@ textarea {
 .header-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.header-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--ink-soft);
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform 0.15s, background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.header-icon-btn:hover {
+  transform: translateY(-1px);
+  border-color: var(--sea);
+  color: var(--sea);
+}
+
+.header-icon-btn.is-danger {
+  color: #b33a2b;
+  border-color: rgba(179, 58, 43, 0.28);
+  background: rgba(179, 58, 43, 0.06);
+}
+
+.header-icon-btn.is-danger:hover {
+  color: #9a2e22;
+  border-color: rgba(179, 58, 43, 0.5);
+  background: rgba(179, 58, 43, 0.12);
+}
+
+.header-icon-btn .trip-icon {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.btn-danger {
+  border-color: #b33a2b;
+  background: #b33a2b;
+  color: #fff;
+}
+
+.btn-danger:hover {
+  border-color: #9a2e22;
+  background: #9a2e22;
+  color: #fff;
+}
+
+.modal-panel-confirm {
+  max-width: 22rem;
+}
+
+.modal-confirm-message {
+  margin: 0 0 1.1rem;
+  color: var(--ink-soft);
+  line-height: 1.55;
 }
 
 .hero-block {
@@ -129,6 +191,60 @@ textarea {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--sea);
+}
+
+.edit-breadcrumb {
+  margin: 0 0 0.4rem;
+  max-width: min(100%, 42rem);
+}
+
+.edit-breadcrumb-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.edit-breadcrumb-item {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: var(--ink-soft);
+}
+
+.edit-breadcrumb-item:not(:last-child)::after {
+  content: '/';
+  margin: 0 0.4rem;
+  color: var(--ink-soft);
+  opacity: 0.45;
+}
+
+.edit-breadcrumb-link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sea);
+  text-decoration: none;
+}
+
+.edit-breadcrumb-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.edit-breadcrumb-current {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-soft);
 }
 
 .lede {
