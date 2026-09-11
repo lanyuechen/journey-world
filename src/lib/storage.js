@@ -1,5 +1,5 @@
 import { ROOT_ID, STORAGE_KEY } from './constants'
-import { createRoot } from './model'
+import { createRoot, isGroup, isTrip, syncItineraryType } from './model'
 
 function seedStore() {
   const root = createRoot()
@@ -14,6 +14,20 @@ function seedStore() {
   }
 }
 
+function normalizeStore(store) {
+  if (!store?.nodes) return store
+  for (const node of Object.values(store.nodes)) {
+    if (isTrip(node)) {
+      if (!Array.isArray(node.internals)) node.internals = []
+      syncItineraryType(node)
+    }
+    if (isGroup(node) && typeof node.description !== 'string') {
+      node.description = ''
+    }
+  }
+  return store
+}
+
 export function loadStore() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -22,7 +36,9 @@ export function loadStore() {
       saveStore(seeded)
       return seeded
     }
-    return JSON.parse(raw)
+    const store = normalizeStore(JSON.parse(raw))
+    saveStore(store)
+    return store
   } catch {
     const seeded = seedStore()
     saveStore(seeded)

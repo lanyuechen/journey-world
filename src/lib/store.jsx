@@ -1,19 +1,16 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import { ROOT_ID } from './constants'
 import {
-  addEdge,
-  createBranchGroupNode,
-  createContainerNode,
-  createLeafNode,
-  detachNodeFromFlow,
-  findParentId,
+  createGroupNode,
+  createTripNode,
+  findParentRef,
   getNode,
-  isBranchGroup,
-  isContainer,
-  removeEdge,
-  setMainEdge,
+  isGroup,
+  isRoot,
+  isTrip,
+  syncItineraryType,
 } from './model'
 import { loadStore, resetStore as resetStorage, saveStore } from './storage'
-import { EDGE_KIND, ROOT_ID, STATUS } from './constants'
 
 const StoreContext = createContext(null)
 
@@ -21,13 +18,60 @@ function cloneStore(store) {
   return structuredClone(store)
 }
 
-function rewriteEdgesForNode(container, oldId, newId) {
-  const edges = (container.edges || []).map((e) => ({
-    ...e,
-    from: e.from === oldId ? newId : e.from,
-    to: e.to === oldId ? newId : e.to,
-  }))
-  return { ...container, edges }
+function replaceInList(list, index, nextId) {
+  return [...list.slice(0, index), nextId, ...list.slice(index + 1)]
+}
+
+function removeFromList(list, id) {
+  return list.filter((item) => item !== id)
+}
+
+function spliceReplace(list, index, items) {
+  return [...list.slice(0, index), ...items, ...list.slice(index + 1)]
+}
+
+/** Lift a node's subsequent children onto `parent` before the node is removed. */
+function promoteChildrenToParent(draft, node, parent, ref) {
+  const promoted = [...(node.children || [])]
+  node.children = []
+  draft.nodes[node.id] = node
+
+  if (!promoted.length) {
+    if (ref.slot === 'children') {
+      parent.children = removeFromList(parent.children || [], node.id)
+    } else if (ref.slot === 'internals') {
+      parent.internals = removeFromList(parent.internals || [], node.id)
+    } else if (ref.slot === 'members') {
+      parent.members = removeFromList(parent.members || [], node.id)
+    }
+    draft.nodes[ref.parentId] = parent
+    return
+  }
+
+  if (ref.slot === 'children') {
+    parent.children = spliceReplace(parent.children || [], ref.index, promoted)
+  } else if (ref.slot === 'internals') {
+    parent.internals = spliceReplace(parent.internals || [], ref.index, promoted)
+  } else if (ref.slot === 'members') {
+    parent.members = removeFromList(parent.members || [], node.id)
+    parent.children = [...promoted, ...(parent.children || [])]
+  }
+  draft.nodes[ref.parentId] = parent
+}
+
+function syncTrip(draft, nodeId) {
+  const node = draft.nodes[nodeId]
+  if (!node || !isTrip(node)) return
+  draft.nodes[nodeId] = syncItineraryType(node)
+}
+
+function removeRecursive(draft, id) {
+  const node = draft.nodes[id]
+  if (!node) return
+  for (const cid of node.children || []) removeRecursive(draft, cid)
+  for (const mid of node.members || []) removeRecursive(draft, mid)
+  for (const iid of node.internals || []) removeRecursive(draft, iid)
+  delete draft.nodes[id]
 }
 
 export function StoreProvider({ children }) {
@@ -50,281 +94,162 @@ export function StoreProvider({ children }) {
       commit((draft) => {
         const node = draft.nodes[nodeId]
         if (!node) return draft
-        draft.nodes[nodeId] = { ...node, ...patch, id: node.id }
+        draft.nodes[nodeId] = { ...node, ...patch, id: node.id, kind: node.kind }
         return draft
       })
     },
-    setLeafStatus(nodeId, status) {
-      commit((draft) => {
-        const node = draft.nodes[nodeId]
-        if (!node || node.kind !== 'leaf') return draft
-        if (!Object.values(STATUS).includes(status)) return draft
-        draft.nodes[nodeId] = { ...node, status }
-        return draft
-      })
-    },
-    addChild(parentId, { asContainer, ...fields }) {
-      const child = asContainer
-        ? createContainerNode(fields)
-        : createLeafNode(fields)
+    /** Append a subsequent trip under parent.children (root / trip / group). */
+    addChild(parentId) {
+      const trip = createTripNode()
       commit((draft) => {
         const parent = draft.nodes[parentId]
-        if (!parent || (!isContainer(parent) && !isBranchGroup(parent))) return draft
-        draft.nodes[child.id] = child
-        parent.children = [...parent.children, child.id]
+        if (!parent || (!isRoot(parent) && !isTrip(parent) && !isGroup(parent))) {
+          return draft
+        }
+        draft.nodes[trip.id] = trip
+        parent.children = [...(parent.children || []), trip.id]
         draft.nodes[parentId] = parent
         return draft
       })
-      return child.id
+      return trip.id
+    },
+    /** Append an internal itinerary trip under a trip's `internals`. */
+    addInternal(tripId) {
+      const trip = createTripNode()
+      commit((draft) => {
+        const parent = draft.nodes[tripId]
+        if (!parent || !isTrip(parent)) return draft
+        if (!Array.isArray(parent.internals)) parent.internals = []
+        draft.nodes[trip.id] = trip
+        parent.internals = [...parent.internals, trip.id]
+        draft.nodes[tripId] = parent
+        syncTrip(draft, tripId)
+        return draft
+      })
+      return trip.id
     },
     /**
-     * Insert a new leaf after `afterId`.
-     * - If afterId lives in a branch-group, insert after that branch-group in its parent container.
-     * - If parent is a branch-group (editing inside it), splice children only.
+     * Right-add on a trip or group: wrap into a new parallel group with a new sibling.
+     * Former children of the source move onto the new group.
+     * Internals stay on the source trip.
      */
-    insertAfter(parentId, afterId) {
-      const child = createLeafNode({
-        name: '',
-        description: '',
-        status: STATUS.pending,
-      })
+    addBeside(nodeId) {
+      const trip = createTripNode()
+      let groupId = null
+
       commit((draft) => {
-        let parent = draft.nodes[parentId]
+        const source = draft.nodes[nodeId]
+        if (!source || (!isTrip(source) && !isGroup(source))) return draft
+
+        const ref = findParentRef(draft, nodeId)
+        if (!ref) return draft
+
+        const parent = draft.nodes[ref.parentId]
         if (!parent) return draft
 
-        let targetAfter = afterId
-        let targetParentId = parentId
+        const movedChildren = [...(source.children || [])]
+        source.children = []
+        draft.nodes[nodeId] = source
 
-        // Active slide inside a branch-group shown on a container page:
-        // "下一程" means after the whole branch card.
-        if (isContainer(parent) && !parent.children.includes(afterId)) {
-          const ownerId = findParentId(draft, afterId)
-          const owner = ownerId ? draft.nodes[ownerId] : null
-          if (owner && isBranchGroup(owner) && parent.children.includes(owner.id)) {
-            targetAfter = owner.id
-          } else {
-            return draft
-          }
-        }
-
-        parent = draft.nodes[targetParentId]
-        if (isBranchGroup(parent)) {
-          if (!parent.children.includes(targetAfter)) return draft
-          draft.nodes[child.id] = child
-          const idx = parent.children.indexOf(targetAfter)
-          parent.children = [
-            ...parent.children.slice(0, idx + 1),
-            child.id,
-            ...parent.children.slice(idx + 1),
-          ]
-          draft.nodes[targetParentId] = parent
-          return draft
-        }
-
-        if (!isContainer(parent) || !parent.children.includes(targetAfter)) return draft
-
-        draft.nodes[child.id] = child
-        const idx = parent.children.indexOf(targetAfter)
-        parent.children = [
-          ...parent.children.slice(0, idx + 1),
-          child.id,
-          ...parent.children.slice(idx + 1),
-        ]
-
-        let next = parent
-        const outs = (next.edges || []).filter((e) => e.from === targetAfter)
-        const mainOut = outs.find((e) => e.kind === EDGE_KIND.main) || outs[0]
-        if (mainOut) {
-          next = removeEdge(next, targetAfter, mainOut.to)
-          next = addEdge(next, targetAfter, child.id, EDGE_KIND.main)
-          next = addEdge(next, child.id, mainOut.to, EDGE_KIND.main)
-        } else {
-          next = addEdge(next, targetAfter, child.id, EDGE_KIND.main)
-        }
-        draft.nodes[targetParentId] = next
-        return draft
-      })
-      return child.id
-    },
-    /**
-     * Add a parallel alternative:
-     * - Inside a branch-group → append sibling to the group.
-     * - On a container timeline card → wrap into a new branch-group Swiper card.
-     */
-    createBranch(parentId, sourceId) {
-      const child = createLeafNode({
-        name: '',
-        description: '',
-        status: STATUS.pending,
-      })
-      let focusId = child.id
-
-      commit((draft) => {
-        const pageParent = draft.nodes[parentId]
-        if (!pageParent) return draft
-
-        const ownerId = findParentId(draft, sourceId)
-        const owner = ownerId ? draft.nodes[ownerId] : null
-
-        // Already in a branch card → add another alternative.
-        if (owner && isBranchGroup(owner)) {
-          draft.nodes[child.id] = child
-          const idx = owner.children.indexOf(sourceId)
-          owner.children = [
-            ...owner.children.slice(0, idx + 1),
-            child.id,
-            ...owner.children.slice(idx + 1),
-          ]
-          draft.nodes[owner.id] = owner
-          focusId = child.id
-          return draft
-        }
-
-        // Viewing a branch-group page directly.
-        if (isBranchGroup(pageParent) && pageParent.children.includes(sourceId)) {
-          draft.nodes[child.id] = child
-          const idx = pageParent.children.indexOf(sourceId)
-          pageParent.children = [
-            ...pageParent.children.slice(0, idx + 1),
-            child.id,
-            ...pageParent.children.slice(idx + 1),
-          ]
-          draft.nodes[parentId] = pageParent
-          focusId = child.id
-          return draft
-        }
-
-        // On a container timeline: wrap source into a branch-group card.
-        if (!isContainer(pageParent) || !pageParent.children.includes(sourceId)) {
-          return draft
-        }
-
-        const group = createBranchGroupNode({
-          name: '分支',
-          children: [sourceId, child.id],
+        const group = createGroupNode({
+          members: [nodeId, trip.id],
+          children: movedChildren,
         })
-        draft.nodes[child.id] = child
+        draft.nodes[trip.id] = trip
         draft.nodes[group.id] = group
+        groupId = group.id
 
-        const idx = pageParent.children.indexOf(sourceId)
-        pageParent.children = [
-          ...pageParent.children.slice(0, idx),
-          group.id,
-          ...pageParent.children.slice(idx + 1),
-        ]
-
-        let next = pageParent
-        next = rewriteEdgesForNode(next, sourceId, group.id)
-        draft.nodes[parentId] = next
-        focusId = child.id
-        return draft
-      })
-
-      return focusId
-    },
-    ensureContainer(nodeId) {
-      commit((draft) => {
-        const node = draft.nodes[nodeId]
-        if (!node || node.kind === 'container' || isBranchGroup(node)) return draft
-        draft.nodes[nodeId] = {
-          ...node,
-          kind: 'container',
-          type: null,
-          children: node.children || [],
-          edges: node.edges || [],
+        if (ref.slot === 'children') {
+          parent.children = replaceInList(parent.children, ref.index, group.id)
+        } else if (ref.slot === 'members') {
+          parent.members = replaceInList(parent.members, ref.index, group.id)
+        } else if (ref.slot === 'internals') {
+          parent.internals = replaceInList(parent.internals, ref.index, group.id)
+          syncTrip(draft, ref.parentId)
         }
+        draft.nodes[ref.parentId] = parent
         return draft
       })
+
+      return { tripId: trip.id, activateId: groupId || trip.id }
+    },
+    /** Append a new trip as a parallel member inside an existing group. */
+    addGroupMember(groupId) {
+      const trip = createTripNode()
+      commit((draft) => {
+        const group = draft.nodes[groupId]
+        if (!group || !isGroup(group)) return draft
+        draft.nodes[trip.id] = trip
+        group.members = [...(group.members || []), trip.id]
+        draft.nodes[groupId] = group
+        return draft
+      })
+      return { tripId: trip.id, activateId: groupId }
     },
     deleteNode(nodeId) {
       if (nodeId === ROOT_ID) return
       commit((draft) => {
-        const parentId = findParentId(draft, nodeId)
-        if (!parentId) return draft
+        const ref = findParentRef(draft, nodeId)
+        if (!ref) return draft
 
-        const removeRecursive = (id) => {
-          const node = draft.nodes[id]
-          if (!node) return
-          for (const cid of node.children || []) removeRecursive(cid)
-          delete draft.nodes[id]
-        }
+        const parent = draft.nodes[ref.parentId]
+        const node = draft.nodes[nodeId]
+        if (!parent || !node) return draft
 
-        const parent = draft.nodes[parentId]
+        // Subsequent children move to this node's parent; internals stay and are removed.
+        promoteChildrenToParent(draft, node, parent, ref)
+        const parentAfter = draft.nodes[ref.parentId]
 
-        if (isBranchGroup(parent)) {
-          parent.children = parent.children.filter((id) => id !== nodeId)
-          draft.nodes[parentId] = parent
-          removeRecursive(nodeId)
+        if (ref.slot === 'members' && isGroup(parentAfter)) {
+          removeRecursive(draft, nodeId)
 
-          // Unwrap when only one alternative remains.
-          if (parent.children.length === 1) {
-            const remainingId = parent.children[0]
-            const grandId = findParentId(draft, parentId)
-            if (grandId) {
-              const grand = draft.nodes[grandId]
-              const gidx = grand.children.indexOf(parentId)
-              if (gidx >= 0) {
-                grand.children = [
-                  ...grand.children.slice(0, gidx),
-                  remainingId,
-                  ...grand.children.slice(gidx + 1),
-                ]
-                if (isContainer(grand)) {
-                  draft.nodes[grandId] = rewriteEdgesForNode(grand, parentId, remainingId)
-                } else {
-                  draft.nodes[grandId] = grand
-                }
-                delete draft.nodes[parentId]
-              }
+          if (parentAfter.members.length === 1) {
+            const remainingId = parentAfter.members[0]
+            const remaining = draft.nodes[remainingId]
+            if (remaining && (isTrip(remaining) || isGroup(remaining))) {
+              remaining.children = [
+                ...(remaining.children || []),
+                ...(parentAfter.children || []),
+              ]
+              draft.nodes[remainingId] = remaining
             }
-          } else if (parent.children.length === 0) {
-            // Empty branch card → remove it from grandparent.
-            const grandId = findParentId(draft, parentId)
-            if (grandId) {
-              const grand = draft.nodes[grandId]
-              if (isContainer(grand)) {
-                draft.nodes[grandId] = {
-                  ...detachNodeFromFlow(grand, parentId),
-                  children: grand.children.filter((id) => id !== parentId),
-                }
-              } else {
-                grand.children = grand.children.filter((id) => id !== parentId)
-                draft.nodes[grandId] = grand
+            const grandRef = findParentRef(draft, parentAfter.id)
+            if (grandRef) {
+              const grand = draft.nodes[grandRef.parentId]
+              if (grandRef.slot === 'children') {
+                grand.children = replaceInList(grand.children, grandRef.index, remainingId)
+              } else if (grandRef.slot === 'members') {
+                grand.members = replaceInList(grand.members, grandRef.index, remainingId)
+              } else if (grandRef.slot === 'internals') {
+                grand.internals = replaceInList(grand.internals, grandRef.index, remainingId)
+                syncTrip(draft, grandRef.parentId)
               }
+              draft.nodes[grandRef.parentId] = grand
             }
-            delete draft.nodes[parentId]
+            delete draft.nodes[parentAfter.id]
+          } else if (parentAfter.members.length === 0) {
+            const grandRef = findParentRef(draft, parentAfter.id)
+            if (grandRef) {
+              const grand = draft.nodes[grandRef.parentId]
+              if (grandRef.slot === 'children') {
+                grand.children = removeFromList(grand.children, parentAfter.id)
+              } else if (grandRef.slot === 'members') {
+                grand.members = removeFromList(grand.members, parentAfter.id)
+              } else if (grandRef.slot === 'internals') {
+                grand.internals = removeFromList(grand.internals, parentAfter.id)
+                syncTrip(draft, grandRef.parentId)
+              }
+              draft.nodes[grandRef.parentId] = grand
+            }
+            removeRecursive(draft, parentAfter.id)
           }
           return draft
         }
 
-        const next = detachNodeFromFlow(parent, nodeId)
-        next.children = (next.children || []).filter((id) => id !== nodeId)
-        draft.nodes[parentId] = next
-        removeRecursive(nodeId)
-        return draft
-      })
-    },
-    linkNodes(parentId, fromId, toId, kind = EDGE_KIND.main) {
-      commit((draft) => {
-        const parent = draft.nodes[parentId]
-        if (!parent || !isContainer(parent)) return draft
-        draft.nodes[parentId] = addEdge(parent, fromId, toId, kind)
-        return draft
-      })
-    },
-    unlinkNodes(parentId, fromId, toId) {
-      commit((draft) => {
-        const parent = draft.nodes[parentId]
-        if (!parent || !isContainer(parent)) return draft
-        draft.nodes[parentId] = removeEdge(parent, fromId, toId)
-        return draft
-      })
-    },
-    switchMain(parentId, fromId, toId) {
-      commit((draft) => {
-        const parent = draft.nodes[parentId]
-        if (!parent || !isContainer(parent)) return draft
-        draft.nodes[parentId] = setMainEdge(parent, fromId, toId)
+        if (ref.slot === 'internals') {
+          syncTrip(draft, ref.parentId)
+        }
+        removeRecursive(draft, nodeId)
         return draft
       })
     },

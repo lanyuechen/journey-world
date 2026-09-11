@@ -11,9 +11,9 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/view" replace />} />
           <Route path="/view" element={<ViewPage />} />
-          <Route path="/view/:nodeId" element={<ViewPage />} />
           <Route path="/edit" element={<EditPage />} />
           <Route path="/edit/:nodeId" element={<EditPage />} />
+          <Route path="*" element={<Navigate to="/view" replace />} />
         </Routes>
       </div>
     </StoreProvider>
