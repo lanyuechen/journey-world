@@ -46,6 +46,28 @@ export function IconView({ className = 'trip-icon' }) {
   )
 }
 
+export function IconExport({ className = 'trip-icon' }) {
+  return (
+    <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path
+        d="M544 128a32 32 0 0 0-64 0v469.376l-157.696-157.696a32 32 0 1 0-45.248 45.248l212.992 212.992a32 32 0 0 0 45.248 0l212.992-212.992a32 32 0 1 0-45.248-45.248L544 597.376V128zM192 704v96a64 64 0 0 0 64 64h512a64 64 0 0 0 64-64v-96a32 32 0 1 1 64 0v96a128 128 0 0 1-128 128H256a128 128 0 0 1-128-128v-96a32 32 0 1 1 64 0z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
+export function IconImport({ className = 'trip-icon' }) {
+  return (
+    <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path
+        d="M512 704a32 32 0 0 0 32-32V202.624l157.696 157.696a32 32 0 1 0 45.248-45.248L533.952 102.08a32 32 0 0 0-45.248 0L275.712 315.072a32 32 0 1 0 45.248 45.248L480 202.624V672a32 32 0 0 0 32 32zM192 704v96a64 64 0 0 0 64 64h512a64 64 0 0 0 64-64v-96a32 32 0 1 1 64 0v96a128 128 0 0 1-128 128H256a128 128 0 0 1-128-128v-96a32 32 0 1 1 64 0z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
 function FloatingTip({ anchorRef, label, open }) {
   const [pos, setPos] = useState(null)
 

@@ -30,17 +30,17 @@ function spliceReplace(list, index, items) {
   return [...list.slice(0, index), ...items, ...list.slice(index + 1)]
 }
 
-/** Lift a node's subsequent children onto `parent` before the node is removed. */
-function promoteChildrenToParent(draft, node, parent, ref) {
-  const promoted = [...(node.children || [])]
-  node.children = []
+/** Lift a node's subsequent `next` onto `parent` before the node is removed. */
+function promoteNextToParent(draft, node, parent, ref) {
+  const promoted = [...(node.next || [])]
+  node.next = []
   draft.nodes[node.id] = node
 
   if (!promoted.length) {
-    if (ref.slot === 'children') {
+    if (ref.slot === 'next') {
+      parent.next = removeFromList(parent.next || [], node.id)
+    } else if (ref.slot === 'children') {
       parent.children = removeFromList(parent.children || [], node.id)
-    } else if (ref.slot === 'internals') {
-      parent.internals = removeFromList(parent.internals || [], node.id)
     } else if (ref.slot === 'members') {
       parent.members = removeFromList(parent.members || [], node.id)
     }
@@ -48,13 +48,13 @@ function promoteChildrenToParent(draft, node, parent, ref) {
     return
   }
 
-  if (ref.slot === 'children') {
+  if (ref.slot === 'next') {
+    parent.next = spliceReplace(parent.next || [], ref.index, promoted)
+  } else if (ref.slot === 'children') {
     parent.children = spliceReplace(parent.children || [], ref.index, promoted)
-  } else if (ref.slot === 'internals') {
-    parent.internals = spliceReplace(parent.internals || [], ref.index, promoted)
   } else if (ref.slot === 'members') {
     parent.members = removeFromList(parent.members || [], node.id)
-    parent.children = [...promoted, ...(parent.children || [])]
+    parent.next = [...promoted, ...(parent.next || [])]
   }
   draft.nodes[ref.parentId] = parent
 }
@@ -68,9 +68,9 @@ function syncTrip(draft, nodeId) {
 function removeRecursive(draft, id) {
   const node = draft.nodes[id]
   if (!node) return
-  for (const cid of node.children || []) removeRecursive(draft, cid)
+  for (const nid of node.next || []) removeRecursive(draft, nid)
   for (const mid of node.members || []) removeRecursive(draft, mid)
-  for (const iid of node.internals || []) removeRecursive(draft, iid)
+  for (const cid of node.children || []) removeRecursive(draft, cid)
   delete draft.nodes[id]
 }
 
@@ -90,6 +90,9 @@ export function StoreProvider({ children }) {
     reset() {
       commit(resetStorage())
     },
+    replaceStore(next) {
+      commit(next)
+    },
     updateNode(nodeId, patch) {
       commit((draft) => {
         const node = draft.nodes[nodeId]
@@ -98,8 +101,8 @@ export function StoreProvider({ children }) {
         return draft
       })
     },
-    /** Append a subsequent trip under parent.children (root / trip / group). */
-    addChild(parentId) {
+    /** Append a subsequent trip under parent.next (root / trip / group). */
+    addNext(parentId) {
       const trip = createTripNode()
       commit((draft) => {
         const parent = draft.nodes[parentId]
@@ -107,21 +110,21 @@ export function StoreProvider({ children }) {
           return draft
         }
         draft.nodes[trip.id] = trip
-        parent.children = [...(parent.children || []), trip.id]
+        parent.next = [...(parent.next || []), trip.id]
         draft.nodes[parentId] = parent
         return draft
       })
       return trip.id
     },
-    /** Append an internal itinerary trip under a trip's `internals`. */
-    addInternal(tripId) {
+    /** Append an internal itinerary trip under a trip's `children`. */
+    addChild(tripId) {
       const trip = createTripNode()
       commit((draft) => {
         const parent = draft.nodes[tripId]
         if (!parent || !isTrip(parent)) return draft
-        if (!Array.isArray(parent.internals)) parent.internals = []
+        if (!Array.isArray(parent.children)) parent.children = []
         draft.nodes[trip.id] = trip
-        parent.internals = [...parent.internals, trip.id]
+        parent.children = [...parent.children, trip.id]
         draft.nodes[tripId] = parent
         syncTrip(draft, tripId)
         return draft
@@ -130,8 +133,8 @@ export function StoreProvider({ children }) {
     },
     /**
      * Right-add on a trip or group: wrap into a new parallel group with a new sibling.
-     * Former children of the source move onto the new group.
-     * Internals stay on the source trip.
+     * Former `next` of the source move onto the new group.
+     * Internal `children` stay on the source trip.
      */
     addBeside(nodeId) {
       const trip = createTripNode()
@@ -147,24 +150,24 @@ export function StoreProvider({ children }) {
         const parent = draft.nodes[ref.parentId]
         if (!parent) return draft
 
-        const movedChildren = [...(source.children || [])]
-        source.children = []
+        const movedNext = [...(source.next || [])]
+        source.next = []
         draft.nodes[nodeId] = source
 
         const group = createGroupNode({
           members: [nodeId, trip.id],
-          children: movedChildren,
+          next: movedNext,
         })
         draft.nodes[trip.id] = trip
         draft.nodes[group.id] = group
         groupId = group.id
 
-        if (ref.slot === 'children') {
-          parent.children = replaceInList(parent.children, ref.index, group.id)
+        if (ref.slot === 'next') {
+          parent.next = replaceInList(parent.next, ref.index, group.id)
         } else if (ref.slot === 'members') {
           parent.members = replaceInList(parent.members, ref.index, group.id)
-        } else if (ref.slot === 'internals') {
-          parent.internals = replaceInList(parent.internals, ref.index, group.id)
+        } else if (ref.slot === 'children') {
+          parent.children = replaceInList(parent.children, ref.index, group.id)
           syncTrip(draft, ref.parentId)
         }
         draft.nodes[ref.parentId] = parent
@@ -196,8 +199,8 @@ export function StoreProvider({ children }) {
         const node = draft.nodes[nodeId]
         if (!parent || !node) return draft
 
-        // Subsequent children move to this node's parent; internals stay and are removed.
-        promoteChildrenToParent(draft, node, parent, ref)
+        // Subsequent next move to this node's parent; children stay and are removed with the node.
+        promoteNextToParent(draft, node, parent, ref)
         const parentAfter = draft.nodes[ref.parentId]
 
         if (ref.slot === 'members' && isGroup(parentAfter)) {
@@ -207,21 +210,21 @@ export function StoreProvider({ children }) {
             const remainingId = parentAfter.members[0]
             const remaining = draft.nodes[remainingId]
             if (remaining && (isTrip(remaining) || isGroup(remaining))) {
-              remaining.children = [
-                ...(remaining.children || []),
-                ...(parentAfter.children || []),
+              remaining.next = [
+                ...(remaining.next || []),
+                ...(parentAfter.next || []),
               ]
               draft.nodes[remainingId] = remaining
             }
             const grandRef = findParentRef(draft, parentAfter.id)
             if (grandRef) {
               const grand = draft.nodes[grandRef.parentId]
-              if (grandRef.slot === 'children') {
-                grand.children = replaceInList(grand.children, grandRef.index, remainingId)
+              if (grandRef.slot === 'next') {
+                grand.next = replaceInList(grand.next, grandRef.index, remainingId)
               } else if (grandRef.slot === 'members') {
                 grand.members = replaceInList(grand.members, grandRef.index, remainingId)
-              } else if (grandRef.slot === 'internals') {
-                grand.internals = replaceInList(grand.internals, grandRef.index, remainingId)
+              } else if (grandRef.slot === 'children') {
+                grand.children = replaceInList(grand.children, grandRef.index, remainingId)
                 syncTrip(draft, grandRef.parentId)
               }
               draft.nodes[grandRef.parentId] = grand
@@ -231,12 +234,12 @@ export function StoreProvider({ children }) {
             const grandRef = findParentRef(draft, parentAfter.id)
             if (grandRef) {
               const grand = draft.nodes[grandRef.parentId]
-              if (grandRef.slot === 'children') {
-                grand.children = removeFromList(grand.children, parentAfter.id)
+              if (grandRef.slot === 'next') {
+                grand.next = removeFromList(grand.next, parentAfter.id)
               } else if (grandRef.slot === 'members') {
                 grand.members = removeFromList(grand.members, parentAfter.id)
-              } else if (grandRef.slot === 'internals') {
-                grand.internals = removeFromList(grand.internals, parentAfter.id)
+              } else if (grandRef.slot === 'children') {
+                grand.children = removeFromList(grand.children, parentAfter.id)
                 syncTrip(draft, grandRef.parentId)
               }
               draft.nodes[grandRef.parentId] = grand
@@ -246,7 +249,7 @@ export function StoreProvider({ children }) {
           return draft
         }
 
-        if (ref.slot === 'internals') {
+        if (ref.slot === 'children') {
           syncTrip(draft, ref.parentId)
         }
         removeRecursive(draft, nodeId)

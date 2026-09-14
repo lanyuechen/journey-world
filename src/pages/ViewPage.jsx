@@ -15,7 +15,7 @@ import {
 import {
   editBreadcrumbTrail,
   editPathFor,
-  getInternals,
+  getChildren,
   getNode,
   isGroup,
   isItineraryTrip,
@@ -75,7 +75,7 @@ function collectElements(store, ids, depth) {
     if (isTrip(node)) {
       const typeLabel = tripTypeLabel(node)
       const timeLabel = toDateTimeInputValue(node.startAt)
-      const internals = getInternals(node)
+      const nested = getChildren(node)
 
       out.push(
         <VerticalTimelineElement
@@ -88,7 +88,7 @@ function collectElements(store, ids, depth) {
             timeLabel={timeLabel}
             dateTime={node.startAt || undefined}
             description={node.description}
-            extra={internals.length ? (
+            extra={nested.length ? (
               <div className="tl-nest" aria-label="内部行程">
                 <p className="tl-nest-label">内部行程</p>
                 <VerticalTimeline
@@ -96,7 +96,7 @@ function collectElements(store, ids, depth) {
                   lineColor="rgba(31, 111, 120, 0.22)"
                   className="tl-nested-timeline"
                 >
-                  {collectElements(store, internals, depth + 1)}
+                  {collectElements(store, nested, depth + 1)}
                 </VerticalTimeline>
               </div>
             ) : null}
@@ -104,8 +104,8 @@ function collectElements(store, ids, depth) {
         </VerticalTimelineElement>,
       )
 
-      if (node.children?.length) {
-        out.push(...collectElements(store, node.children, depth))
+      if (node.next?.length) {
+        out.push(...collectElements(store, node.next, depth))
       }
       return
     }
@@ -152,8 +152,8 @@ function collectElements(store, ids, depth) {
         </VerticalTimelineElement>,
       )
 
-      if (node.children?.length) {
-        out.push(...collectElements(store, node.children, depth))
+      if (node.next?.length) {
+        out.push(...collectElements(store, node.next, depth))
       }
     }
   })
@@ -191,7 +191,7 @@ export default function ViewPage() {
   const title = isRootScope
     ? (scope.name || '我的旅程')
     : (scope.name?.trim() || '未命名行程')
-  const forestIds = isRootScope ? (scope.children || []) : getInternals(scope)
+  const forestIds = isRootScope ? (scope.next || []) : getChildren(scope)
   const editPath = editPathFor(scopeId)
   const breadcrumbs = isRootScope ? null : editBreadcrumbTrail(store, scopeId)
 

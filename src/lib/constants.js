@@ -32,7 +32,7 @@ export const STATUS = {
 
 export const ROOT_ID = 'root'
 
-/** Bumped for tree-based trip / group schema (no edges). */
+/** Tree store: next = subsequent flow, children = internal flow (v2). */
 export const STORAGE_KEY = 'journey-world-v3'
 
 export const TZ = 'Asia/Shanghai'

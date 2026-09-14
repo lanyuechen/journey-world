@@ -10,7 +10,8 @@ export function createRoot() {
     kind: NODE_KIND.root,
     name: '我的旅程',
     description: '人生旅途的根节点，可在此添加旅行与安排',
-    children: [],
+    /** Subsequent trips (below-add); shown in outer column. */
+    next: [],
   }
 }
 
@@ -20,8 +21,8 @@ export function createTripNode({
   type = DEFAULT_NODE_TYPE,
   startAt = null,
   status = STATUS.pending,
+  next = [],
   children = [],
-  internals = [],
 } = {}) {
   return {
     id: createId('trip'),
@@ -32,9 +33,9 @@ export function createTripNode({
     startAt,
     status,
     /** Subsequent trips under this card (below-add); shown in outer column. */
+    next: [...next],
+    /** Internal itinerary (nested edit); not flattened into the outer column. */
     children: [...children],
-    /** Internal itinerary (edit-button); card attribute; not shown in outer column. */
-    internals: [...internals],
   }
 }
 
@@ -42,7 +43,7 @@ export function createGroupNode({
   name = '',
   description = '',
   members = [],
-  children = [],
+  next = [],
 } = {}) {
   return {
     id: createId('group'),
@@ -50,7 +51,7 @@ export function createGroupNode({
     name,
     description,
     members: [...members],
-    children: [...children],
+    next: [...next],
   }
 }
 
@@ -66,30 +67,35 @@ export function isGroup(node) {
   return node?.kind === NODE_KIND.group
 }
 
-export function getInternals(node) {
-  return node?.internals || []
+export function getNext(node) {
+  return node?.next || []
+}
+
+export function getChildren(node) {
+  return node?.children || []
 }
 
 export function isItineraryTrip(node) {
   if (!isTrip(node)) return false
-  if (!getInternals(node).length) return false
+  if (!getChildren(node).length) return false
   return node.type === ITINERARY_TYPE || ITINERARY_TYPE_LEGACY.includes(node.type)
 }
 
 /**
- * Trip with internals → type「行程」; empty internals → restore ordinary type.
+ * Trip with children → type「行程」; empty children → restore ordinary type.
  * Mutates and returns the node.
  */
 export function syncItineraryType(node) {
   if (!isTrip(node)) return node
 
-  if (!Array.isArray(node.internals)) node.internals = []
+  if (!Array.isArray(node.children)) node.children = []
+  if (!Array.isArray(node.next)) node.next = []
 
-  const hasInternals = node.internals.length > 0
+  const hasChildren = node.children.length > 0
   const isItineraryLabel = node.type === ITINERARY_TYPE
     || ITINERARY_TYPE_LEGACY.includes(node.type)
 
-  if (hasInternals) {
+  if (hasChildren) {
     if (!isItineraryLabel) {
       node.typeBeforeItinerary = NODE_TYPES.includes(node.type) ? node.type : DEFAULT_NODE_TYPE
     }
@@ -117,12 +123,12 @@ export function viewPathFor(nodeId) {
   return `/view/${nodeId}`
 }
 
-/** Parent edit scope: via `internals`, or a trip whose internals tree contains the parent group. */
+/** Parent edit scope: via `children`, or a trip whose children tree contains the parent group. */
 export function parentEditPath(store, nodeId) {
   const ref = findParentRef(store, nodeId)
   if (!ref) return '/edit'
 
-  if (ref.slot === 'internals') {
+  if (ref.slot === 'children') {
     const parent = getNode(store, ref.parentId)
     if (parent && isTrip(parent)) return editPathFor(ref.parentId)
     return '/edit'
@@ -131,13 +137,13 @@ export function parentEditPath(store, nodeId) {
   let groupId = null
   if (ref.slot === 'members') {
     groupId = ref.parentId
-  } else if (ref.slot === 'children') {
+  } else if (ref.slot === 'next') {
     const parent = getNode(store, ref.parentId)
     if (parent && isGroup(parent)) groupId = ref.parentId
   }
 
   if (groupId) {
-    const hostId = findInternalsContainingTrip(store, groupId)
+    const hostId = findChildrenContainingTrip(store, groupId)
     if (hostId) return editPathFor(hostId)
   }
 
@@ -154,27 +160,30 @@ function pushRootCrumb(store, trail) {
 }
 
 /**
- * Nearest trip that contains `nodeId` somewhere under its `internals` tree
- * (direct or nested via children / members / further internals).
+ * Nearest trip that contains `nodeId` somewhere under its `children` tree
+ * (direct or nested via next / members / further children).
  */
-export function findInternalsContainingTrip(store, nodeId) {
+export function findChildrenContainingTrip(store, nodeId) {
   let cursor = nodeId
   while (cursor) {
     const ref = findParentRef(store, cursor)
     if (!ref) return null
     const parent = getNode(store, ref.parentId)
     if (!parent || isRoot(parent)) return null
-    if (ref.slot === 'internals' && isTrip(parent)) return parent.id
+    if (ref.slot === 'children' && isTrip(parent)) return parent.id
     cursor = ref.parentId
   }
   return null
 }
 
+/** @deprecated use findChildrenContainingTrip */
+export const findInternalsContainingTrip = findChildrenContainingTrip
+
 /**
  * Breadcrumb for internal-edit scopes.
- * - Follow `internals` nesting.
- * - For groups: climb to the trip whose `internals` tree contains the group; else root.
- * - Do not follow plain `children` between trips.
+ * - Follow `children` nesting.
+ * - For groups: climb to the trip whose `children` tree contains the group; else root.
+ * - Do not follow plain `next` between trips.
  */
 export function editBreadcrumbTrail(store, nodeId) {
   const trail = []
@@ -190,7 +199,7 @@ export function editBreadcrumbTrail(store, nodeId) {
     }
 
     if (isGroup(node)) {
-      const hostId = findInternalsContainingTrip(store, node.id)
+      const hostId = findChildrenContainingTrip(store, node.id)
       if (hostId) {
         current = hostId
         continue
@@ -207,12 +216,12 @@ export function editBreadcrumbTrail(store, nodeId) {
       })
 
       const ref = findParentRef(store, current)
-      if (ref?.slot === 'internals' || ref?.slot === 'members') {
+      if (ref?.slot === 'children' || ref?.slot === 'members') {
         current = ref.parentId
         continue
       }
 
-      if (ref?.slot === 'children') {
+      if (ref?.slot === 'next') {
         const parent = getNode(store, ref.parentId)
         if (parent && isGroup(parent)) {
           current = ref.parentId
@@ -235,23 +244,23 @@ export function getNode(store, id) {
 }
 
 /**
- * Locate a node in its parent's `children`, `members`, or `internals` list.
- * @returns {{ parentId: string, slot: 'children' | 'members' | 'internals', index: number } | null}
+ * Locate a node in its parent's `next`, `members`, or `children` list.
+ * @returns {{ parentId: string, slot: 'next' | 'members' | 'children', index: number } | null}
  */
 export function findParentRef(store, nodeId) {
   if (nodeId === ROOT_ID) return null
   for (const node of Object.values(store.nodes)) {
-    const childIndex = node.children?.indexOf(nodeId) ?? -1
-    if (childIndex >= 0) {
-      return { parentId: node.id, slot: 'children', index: childIndex }
+    const nextIndex = node.next?.indexOf(nodeId) ?? -1
+    if (nextIndex >= 0) {
+      return { parentId: node.id, slot: 'next', index: nextIndex }
     }
     const memberIndex = node.members?.indexOf(nodeId) ?? -1
     if (memberIndex >= 0) {
       return { parentId: node.id, slot: 'members', index: memberIndex }
     }
-    const internalIndex = node.internals?.indexOf(nodeId) ?? -1
-    if (internalIndex >= 0) {
-      return { parentId: node.id, slot: 'internals', index: internalIndex }
+    const childIndex = node.children?.indexOf(nodeId) ?? -1
+    if (childIndex >= 0) {
+      return { parentId: node.id, slot: 'children', index: childIndex }
     }
   }
   return null

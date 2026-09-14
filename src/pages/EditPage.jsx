@@ -4,6 +4,8 @@ import { Link, Navigate, useParams } from 'react-router-dom'
 import {
   ConfirmModal,
   IconEdit,
+  IconExport,
+  IconImport,
   IconNested,
   IconTrash,
   IconView,
@@ -24,6 +26,11 @@ import {
   viewPathFor,
 } from '../lib/model'
 import { useStore } from '../lib/store'
+import {
+  downloadStoreJson,
+  makeExportFilename,
+  parseStorePayload,
+} from '../lib/storage'
 import { TypeIcon, typeToneClass } from '../lib/typeIcons'
 
 const EditUiContext = createContext(null)
@@ -386,13 +393,13 @@ function TripFormModal({
   )
 }
 
-/** True if rootId is targetId or an ancestor of it (via children / members). */
+/** True if rootId is targetId or an ancestor of it (via next / members). */
 function nodeContains(store, rootId, targetId) {
   if (!rootId || !targetId) return false
   if (rootId === targetId) return true
   const node = getNode(store, rootId)
   if (!node) return false
-  for (const id of node.children || []) {
+  for (const id of node.next || []) {
     if (nodeContains(store, id, targetId)) return true
   }
   for (const id of node.members || []) {
@@ -401,13 +408,13 @@ function nodeContains(store, rootId, targetId) {
   return false
 }
 
-/** Preorder flatten along subsequent children (not members, not internals). */
+/** Preorder flatten along subsequent next (not members, not children). */
 function flattenColumnEntries(store, nodeId) {
   const node = getNode(store, nodeId)
   if (!node || (!isTrip(node) && !isGroup(node))) return []
   const entries = [{ id: nodeId, node }]
-  for (const childId of node.children || []) {
-    entries.push(...flattenColumnEntries(store, childId))
+  for (const nextId of node.next || []) {
+    entries.push(...flattenColumnEntries(store, nextId))
   }
   return entries
 }
@@ -522,7 +529,7 @@ function StretchUnit({
   onActivate,
   depth,
 }) {
-  const { store, addChild, addBeside, deleteNode } = useStore()
+  const { store, addNext, addBeside, deleteNode } = useStore()
   const { openCreateTrip } = useEditUi()
   const node = getNode(store, nodeId)
   if (!node) return null
@@ -565,7 +572,7 @@ function StretchUnit({
         <AddTripSlot
           variant="below"
           className="stretch-unit-below"
-          onClick={() => openCreateTrip(() => addChild(nodeId))}
+          onClick={() => openCreateTrip(() => addNext(nodeId))}
         />
       )}
     </div>
@@ -755,12 +762,15 @@ function GroupShell({
 
 export default function EditPage() {
   const { nodeId: scopeParam } = useParams()
-  const { store, addChild, addInternal, reset, updateNode } = useStore()
+  const { store, addNext, addChild, reset, replaceStore, updateNode } = useStore()
   const [focusId, setFocusId] = useState(null)
   const [activeId, setActiveId] = useState(null)
   const [tripForm, setTripForm] = useState(null)
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false)
+  const [pendingImport, setPendingImport] = useState(null)
+  const [importError, setImportError] = useState(null)
   const pendingFlipRef = useRef(null)
+  const importInputRef = useRef(null)
 
   const scopeId = scopeParam || ROOT_ID
   const scope = getNode(store, scopeId)
@@ -891,7 +901,7 @@ export default function EditPage() {
   const title = isRootScope
     ? (scope.name || '我的旅程')
     : (scope.name?.trim() || '未命名行程')
-  const forestIds = isRootScope ? (scope.children || []) : (scope.internals || [])
+  const forestIds = isRootScope ? (scope.next || []) : (scope.children || [])
   const breadcrumbs = isRootScope ? null : editBreadcrumbTrail(store, scopeId)
 
   const editUi = { openCreateTrip, openEditTrip, openEditGroup }
@@ -947,14 +957,53 @@ export default function EditPage() {
               <IconView />
             </TipLink>
             {isRootScope ? (
-              <TipButton
-                tip="清空重置"
-                className="header-icon-btn is-danger"
-                aria-label="清空重置"
-                onClick={() => setResetConfirmOpen(true)}
-              >
-                <IconTrash />
-              </TipButton>
+              <>
+                <TipButton
+                  tip="导出数据"
+                  className="header-icon-btn"
+                  aria-label="导出数据"
+                  onClick={() => downloadStoreJson(store, makeExportFilename())}
+                >
+                  <IconExport />
+                </TipButton>
+                <TipButton
+                  tip="导入数据"
+                  className="header-icon-btn"
+                  aria-label="导入数据"
+                  onClick={() => importInputRef.current?.click()}
+                >
+                  <IconImport />
+                </TipButton>
+                <TipButton
+                  tip="清空重置"
+                  className="header-icon-btn is-danger"
+                  aria-label="清空重置"
+                  onClick={() => setResetConfirmOpen(true)}
+                >
+                  <IconTrash />
+                </TipButton>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="visually-hidden"
+                  tabIndex={-1}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0]
+                    e.target.value = ''
+                    if (!file) return
+                    try {
+                      const text = await file.text()
+                      const next = parseStorePayload(text)
+                      setImportError(null)
+                      setPendingImport(next)
+                    } catch (err) {
+                      setPendingImport(null)
+                      setImportError(err instanceof Error ? err.message : '导入失败')
+                    }
+                  }}
+                />
+              </>
             ) : null}
           </div>
         </header>
@@ -972,7 +1021,7 @@ export default function EditPage() {
             <AddTripSlot
               variant="empty"
               onClick={() => openCreateTrip(() => (
-                isRootScope ? addChild(scopeId) : addInternal(scopeId)
+                isRootScope ? addNext(scopeId) : addChild(scopeId)
               ))}
             />
           ) : (
@@ -1020,6 +1069,33 @@ export default function EditPage() {
             setActiveId(null)
             setResetConfirmOpen(false)
           }}
+        />
+
+        <ConfirmModal
+          open={Boolean(pendingImport)}
+          title="导入数据"
+          message="导入将覆盖当前全部行程数据，是否继续？"
+          confirmLabel="导入"
+          danger
+          onCancel={() => setPendingImport(null)}
+          onConfirm={() => {
+            if (pendingImport) {
+              replaceStore(pendingImport)
+              setFocusId(null)
+              setActiveId(null)
+            }
+            setPendingImport(null)
+          }}
+        />
+
+        <ConfirmModal
+          open={Boolean(importError)}
+          title="导入失败"
+          message={importError || '无法读取该文件'}
+          confirmLabel="知道了"
+          cancelLabel="关闭"
+          onCancel={() => setImportError(null)}
+          onConfirm={() => setImportError(null)}
         />
       </div>
     </EditUiContext.Provider>
