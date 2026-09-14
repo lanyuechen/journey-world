@@ -68,6 +68,17 @@ export function IconImport({ className = 'trip-icon' }) {
   )
 }
 
+export function IconMap({ className = 'trip-icon' }) {
+  return (
+    <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path
+        d="M512 96c-159.296 0-288 128.704-288 288 0 201.984 259.2 492.8 270.272 505.152a24.32 24.32 0 0 0 35.456 0C540.8 876.8 800 586 800 384 800 224.704 671.296 96 512 96z m0 416a128 128 0 1 1 0-256 128 128 0 0 1 0 256z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
 function FloatingTip({ anchorRef, label, open }) {
   const [pos, setPos] = useState(null)
 

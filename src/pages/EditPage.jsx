@@ -12,6 +12,7 @@ import {
   TipButton,
   TipLink,
 } from '../components/actionUi'
+import { MapPlaceLink } from '../components/MapPlaceLink'
 import { DEFAULT_GROUP_NAME, DEFAULT_NODE_TYPE, DEFAULT_TRIP_DESC, GROUP_TYPE_LABEL, ITINERARY_TYPE, NODE_TYPES, ROOT_ID } from '../lib/constants'
 import { captureFlipRects, playFlip } from '../lib/flip'
 import {
@@ -22,6 +23,7 @@ import {
   isGroup,
   isItineraryTrip,
   isTrip,
+  normalizeMap,
   toDatetimeLocalValue,
   viewPathFor,
 } from '../lib/model'
@@ -257,6 +259,8 @@ function emptyTripForm() {
     description: '',
     type: DEFAULT_NODE_TYPE,
     startAtLocal: '',
+    mapName: '',
+    mapAddress: '',
   }
 }
 
@@ -266,6 +270,8 @@ function formFromNode(node) {
     description: node?.description || '',
     type: isItineraryTrip(node) ? ITINERARY_TYPE : (node?.type || DEFAULT_NODE_TYPE),
     startAtLocal: toDatetimeLocalValue(node?.startAt),
+    mapName: node?.map?.name || '',
+    mapAddress: node?.map?.address || '',
   }
 }
 
@@ -276,6 +282,7 @@ function TripFormModal({
   lockType = false,
   showType = true,
   showTime = true,
+  showMap = true,
   namePlaceholder = '行程名称',
   confirmLabel = '确定',
   onCancel,
@@ -311,6 +318,10 @@ function TripFormModal({
       description: form.description.trim(),
       type: lockType ? ITINERARY_TYPE : form.type,
       startAt: fromDatetimeLocalValue(form.startAtLocal),
+      map: normalizeMap({
+        name: form.mapName,
+        address: form.mapAddress,
+      }),
     })
   }
 
@@ -377,6 +388,28 @@ function TripFormModal({
                 onChange={(e) => patch('startAtLocal', e.target.value)}
               />
             </label>
+          ) : null}
+          {showMap ? (
+            <>
+              <label className="modal-field">
+                <span className="modal-label">地图地点</span>
+                <input
+                  className="modal-input"
+                  value={form.mapName}
+                  onChange={(e) => patch('mapName', e.target.value)}
+                  placeholder="如：外滩 / 迪士尼乐园（可选）"
+                />
+              </label>
+              <label className="modal-field">
+                <span className="modal-label">详细地址</span>
+                <input
+                  className="modal-input"
+                  value={form.mapAddress}
+                  onChange={(e) => patch('mapAddress', e.target.value)}
+                  placeholder="可选，便于高德更准确定位"
+                />
+              </label>
+            </>
           ) : null}
           <div className="modal-actions">
             <button type="button" className="btn btn-ghost" onClick={onCancel}>
@@ -509,6 +542,7 @@ function TripCard({
             <span className={`trip-heading-desc${node.description?.trim() ? '' : ' is-placeholder'}`}>
               {node.description?.trim() || DEFAULT_TRIP_DESC}
             </span>
+            <MapPlaceLink map={node.map} />
           </div>
         </div>
       </div>
@@ -831,6 +865,7 @@ export default function EditPage() {
           description: values.description,
           type: values.type,
           startAt: values.startAt,
+          map: values.map ?? null,
         })
         setFocusId(tripId)
         activateWithFlip(activateId)
@@ -857,6 +892,7 @@ export default function EditPage() {
           name: values.name,
           description: values.description,
           startAt: values.startAt,
+          map: values.map ?? null,
         }
         if (!locked) patch.type = values.type
         updateNode(nodeId, patch)
@@ -875,6 +911,7 @@ export default function EditPage() {
       lockType: false,
       showType: false,
       showTime: false,
+      showMap: false,
       namePlaceholder: '行程组名称',
       initial: {
         name: node.name || '',
@@ -1050,6 +1087,7 @@ export default function EditPage() {
           lockType={Boolean(tripForm?.lockType)}
           showType={tripForm?.showType !== false}
           showTime={tripForm?.showTime !== false}
+          showMap={tripForm?.showMap !== false}
           namePlaceholder={tripForm?.namePlaceholder || '行程名称'}
           confirmLabel={tripForm?.confirmLabel || '确定'}
           onCancel={closeTripForm}

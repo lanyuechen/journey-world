@@ -32,6 +32,8 @@ export function createTripNode({
     type,
     startAt,
     status,
+    /** Optional place; click opens 高德地图. */
+    map: null,
     /** Subsequent trips under this card (below-add); shown in outer column. */
     next: [...next],
     /** Internal itinerary (nested edit); not flattened into the outer column. */
@@ -313,4 +315,44 @@ export function fromDatetimeLocalValue(local) {
   const d = new Date(withOffset)
   if (Number.isNaN(d.getTime())) return null
   return d.toISOString()
+}
+
+/** Normalize trip.map; empty name → null. */
+export function normalizeMap(map) {
+  if (!map || typeof map !== 'object') return null
+  const name = String(map.name || '').trim()
+  if (!name) return null
+  const address = String(map.address || '').trim()
+  const lng = map.lng == null || map.lng === '' ? null : Number(map.lng)
+  const lat = map.lat == null || map.lat === '' ? null : Number(map.lat)
+  const out = { name }
+  if (address) out.address = address
+  if (Number.isFinite(lng) && Number.isFinite(lat)) {
+    out.lng = lng
+    out.lat = lat
+  }
+  return out
+}
+
+/** Open 高德：已装 App 则唤起，否则打开网页版。 */
+export function buildAmapOpenUrl(map) {
+  const place = normalizeMap(map)
+  if (!place) return null
+  if (place.lng != null && place.lat != null) {
+    const params = new URLSearchParams({
+      position: `${place.lng},${place.lat}`,
+      name: place.name,
+      src: 'journey-world',
+      coordinate: 'gaode',
+      callnative: '1',
+    })
+    return `https://uri.amap.com/marker?${params.toString()}`
+  }
+  const keyword = [place.name, place.address].filter(Boolean).join(' ')
+  const params = new URLSearchParams({
+    keyword,
+    src: 'journey-world',
+    callnative: '1',
+  })
+  return `https://uri.amap.com/search?${params.toString()}`
 }

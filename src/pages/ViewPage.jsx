@@ -5,6 +5,7 @@ import {
 } from 'react-vertical-timeline-component'
 import 'react-vertical-timeline-component/style.min.css'
 import { IconEdit, TipLink } from '../components/actionUi'
+import { MapPlaceLink } from '../components/MapPlaceLink'
 import {
   DEFAULT_GROUP_NAME,
   DEFAULT_NODE_TYPE,
@@ -31,7 +32,7 @@ function tripTypeLabel(node) {
   return node.type || DEFAULT_NODE_TYPE
 }
 
-function TimelineBody({ title, timeLabel, dateTime, description, extra = null }) {
+function TimelineBody({ title, timeLabel, dateTime, description, map = null, extra = null }) {
   const hasRealDesc = Boolean(description?.trim())
   return (
     <>
@@ -44,6 +45,7 @@ function TimelineBody({ title, timeLabel, dateTime, description, extra = null })
       <p className={`tl-desc${hasRealDesc ? '' : ' is-placeholder'}`}>
         {description?.trim() || DEFAULT_TRIP_DESC}
       </p>
+      <MapPlaceLink map={map} className="tl-map-link" />
       {extra}
     </>
   )
@@ -88,6 +90,7 @@ function collectElements(store, ids, depth) {
             timeLabel={timeLabel}
             dateTime={node.startAt || undefined}
             description={node.description}
+            map={node.map}
             extra={nested.length ? (
               <div className="tl-nest" aria-label="内部行程">
                 <p className="tl-nest-label">内部行程</p>
