@@ -334,25 +334,112 @@ export function normalizeMap(map) {
   return out
 }
 
-/** Open 高德：已装 App 则唤起，否则打开网页版。 */
-export function buildAmapOpenUrl(map) {
+function mapKeyword(place) {
+  return [place.name, place.address].filter(Boolean).join(' ')
+}
+
+function detectClient() {
+  const ua = navigator.userAgent || ''
+  const isIOS = /iPhone|iPad|iPod/i.test(ua)
+  const isAndroid = /Android/i.test(ua)
+  const isMobile = isIOS || isAndroid || /Mobile|HarmonyOS/i.test(ua)
+  return { isIOS, isAndroid, isMobile }
+}
+
+/** 高德网页 URI（移动端可带 callnative 尝试唤起 App）。 */
+export function buildAmapWebUrl(map) {
   const place = normalizeMap(map)
   if (!place) return null
+  const src = encodeURIComponent('journey-world')
   if (place.lng != null && place.lat != null) {
-    const params = new URLSearchParams({
-      position: `${place.lng},${place.lat}`,
-      name: place.name,
-      src: 'journey-world',
-      coordinate: 'gaode',
-      callnative: '1',
-    })
-    return `https://uri.amap.com/marker?${params.toString()}`
+    return `https://uri.amap.com/marker?position=${place.lng},${place.lat}&name=${encodeURIComponent(place.name)}&src=${src}&coordinate=gaode&callnative=1`
   }
-  const keyword = [place.name, place.address].filter(Boolean).join(' ')
-  const params = new URLSearchParams({
-    keyword,
-    src: 'journey-world',
-    callnative: '1',
-  })
-  return `https://uri.amap.com/search?${params.toString()}`
+  return `https://uri.amap.com/search?keyword=${encodeURIComponent(mapKeyword(place))}&src=${src}&callnative=1`
+}
+
+/** 桌面端高德网页搜索（更稳）。 */
+export function buildAmapDesktopUrl(map) {
+  const place = normalizeMap(map)
+  if (!place) return null
+  return `https://www.amap.com/search?query=${encodeURIComponent(mapKeyword(place))}`
+}
+
+/** iOS / Android 原生 Scheme。 */
+export function buildAmapSchemeUrl(map) {
+  const place = normalizeMap(map)
+  if (!place) return null
+  const { isIOS, isAndroid } = detectClient()
+  const name = encodeURIComponent(place.name)
+  const keyword = encodeURIComponent(mapKeyword(place))
+  const src = encodeURIComponent('journey-world')
+
+  if (place.lng != null && place.lat != null) {
+    const { lng, lat } = place
+    if (isIOS) {
+      return `iosamap://viewMap?sourceApplication=${src}&poiname=${name}&lat=${lat}&lon=${lng}&dev=0`
+    }
+    if (isAndroid) {
+      return `androidamap://viewMap?sourceApplication=${src}&poiname=${name}&lat=${lat}&lon=${lng}&dev=0`
+    }
+    return `amapuri://viewMap?sourceApplication=${src}&poiname=${name}&lat=${lat}&lon=${lng}&dev=0`
+  }
+
+  if (isIOS) {
+    return `iosamap://poi?sourceApplication=${src}&name=${keyword}`
+  }
+  if (isAndroid) {
+    return `androidamap://poi?sourceApplication=${src}&keywords=${keyword}`
+  }
+  return `amapuri://poi?sourceApplication=${src}&keywords=${keyword}`
+}
+
+/**
+ * 打开高德地图：
+ * - 桌面：打开网页搜索
+ * - 移动：先尝试 App Scheme，失败再跳转官方 URI（同页，避免 target=_blank 导致无法唤端）
+ */
+export function openInAmap(map) {
+  const place = normalizeMap(map)
+  if (!place) return false
+
+  const { isMobile } = detectClient()
+  const desktopUrl = buildAmapDesktopUrl(place)
+  const webUrl = buildAmapWebUrl(place)
+  const scheme = buildAmapSchemeUrl(place)
+
+  if (!isMobile) {
+    window.open(desktopUrl || webUrl, '_blank', 'noopener,noreferrer')
+    return true
+  }
+
+  let leftPage = false
+  const markLeft = () => {
+    leftPage = true
+  }
+  document.addEventListener('visibilitychange', markLeft)
+  window.addEventListener('pagehide', markLeft)
+
+  // 先尝试原生协议唤起
+  if (scheme) {
+    const iframe = document.createElement('iframe')
+    iframe.style.cssText = 'display:none;width:0;height:0;border:0'
+    iframe.src = scheme
+    document.body.appendChild(iframe)
+    window.setTimeout(() => iframe.remove(), 2000)
+  }
+
+  window.setTimeout(() => {
+    document.removeEventListener('visibilitychange', markLeft)
+    window.removeEventListener('pagehide', markLeft)
+    if (leftPage) return
+    // 同页跳转官方 URI，便于 callnative 与未安装时的网页兜底
+    window.location.href = webUrl || desktopUrl
+  }, 1200)
+
+  return true
+}
+
+/** @deprecated use openInAmap / buildAmapWebUrl */
+export function buildAmapOpenUrl(map) {
+  return buildAmapWebUrl(map)
 }
